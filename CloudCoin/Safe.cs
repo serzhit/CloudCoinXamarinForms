@@ -4,9 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Security.Cryptography;
 using CryptSharp;
+using PCLStorage;
 
 using Newtonsoft.Json;
 
@@ -14,64 +13,68 @@ namespace CloudCoin
 {
     public class Safe
     {
+		const string SafeFolderName = "CloudCoin";
+		const string SafeFileName = "cloudcoin.safe";
         public static Safe Instance
         {
             get
             {
-                return theOnlySafeInstance ?? GetInstance();
+				return theOnlySafeInstance ?? GetInstance();
             }
 
         }
 
-        private static Safe theOnlySafeInstance = null;
-        private static Safe GetInstance()
+        static Safe theOnlySafeInstance;
+		static Safe GetInstance()
         {
-            var settingsSafeFilePath = Properties.Settings.Default.SafeFileName;
-            var filePath = Environment.ExpandEnvironmentVariables(settingsSafeFilePath);
+			IFolder rootFolder = FileSystem.Current.RoamingStorage;
+			Task<IFolder> tCreateCloudcoinFolder = rootFolder.CreateFolderAsync(SafeFolderName, CreationCollisionOption.OpenIfExists);
+			tCreateCloudcoinFolder.ContinueWith(async (_tCreateCloudcoinFolder) =>
+			{
+				ExistenceCheckResult checkDoesSafeExists = await _tCreateCloudcoinFolder.Result.CheckExistsAsync(SafeFileName);
 
-            var fileInfo = new FileInfo(filePath);
-            if (!fileInfo.Exists)
-            { //Safe does not exist, create one
-                var pass = SetPassword();
-                if (pass != "error")
-                {
-                    var coins = new CoinStack();
-                    if (CreateSafeFile(fileInfo, pass, coins))
-                    {
-                        theOnlySafeInstance = new Safe(fileInfo, pass, coins);
-                        return theOnlySafeInstance;
-                    }
-                    else
-                        return null;
-                }
-                else
-                    return null;
-            }
-            else
-            {
-                var pass = CheckPassword(fileInfo);
-                if (pass != "error")
-                {
-                    CoinStack safeContents = ReadSafeFile(fileInfo, pass);
-                    if (safeContents != null)
-                    {
-                        theOnlySafeInstance = new Safe(fileInfo, pass, safeContents);
-                        return theOnlySafeInstance;
-                    }
-                    else
-                        return null;
-                }
-                else
-                    return null;
-            }
+				if (!checkDoesSafeExists.Equals(ExistenceCheckResult.FileExists))
+				{ //Safe does not exist, create one
+					var setPasswordViewModel = new SetPasswordViewModel();
+					if (pass != "error")
+					{
+						var coins = new CoinStack();
+						if (CreateSafeFile(SafeFileName, pass, coins))
+						{
+							theOnlySafeInstance = new Safe(SafeFileName, pass, coins);
+							return theOnlySafeInstance;
+						}
+						return null;
+					}
+					return null;
+				}
+				else
+				{
+					var pass = CheckPassword(SafeFileName);
+					if (pass != "error")
+					{
+						CoinStack safeContents = ReadSafeFile(fileInfo, pass);
+						if (safeContents != null)
+						{
+							theOnlySafeInstance = new Safe(SafeFileName, pass, safeContents);
+							return theOnlySafeInstance;
+						}
+						else
+							return null;
+					}
+					else
+						return null;
+				}
+			});
         }
 
-        private static string cryptPassFromFile = "";
-        public string safeFilePath;
-        public FileInfo safeFileInfo;
-        private string password;
-        private string cryptedPass;
-        public CoinStack Contents;
+		static string cryptPassFromFile = "";
+		public string safeFilePath;
+		public static string password;
+		string cryptedPass;
+		public CoinStack Contents;
+
+
         public Shelf Ones
         {
             get
@@ -291,31 +294,17 @@ namespace CloudCoin
             }
         }
 
-        private Safe(FileInfo fi, string pass, CoinStack coins)
+        private Safe(string filename, string pass, CoinStack coins)
         {
             password = pass;
-            safeFilePath = fi.FullName;
-            safeFileInfo = fi;
+//            safeFilePath = fi.FullName;
+//            safeFileInfo = fi;
             cryptedPass = Crypter.Blowfish.Crypt(Encoding.UTF8.GetBytes(pass)); ;
             Contents = coins;
             beforeFixStart += new EventHandler(StartFixProcess);
         }
 
-        private static string SetPassword()
-        {
-            var passwordWindow = new SetPasswordWindow();
-            passwordWindow.Password.Focus();
-            passwordWindow.Owner = MainWindow.Instance;
-            passwordWindow.ShowDialog();
-            if (passwordWindow.DialogResult == true)
-            {
-                return passwordWindow.Password.Password;
-            }
-            else
-                return "error";
-        }
-
-        private static string CheckPassword(FileInfo fi)
+        private static string CheckPassword(string filename)
         {
             using (var fs = fi.Open(FileMode.Open))
             {
@@ -353,7 +342,7 @@ namespace CloudCoin
             return "error";
         }
         
-        private static bool CreateSafeFile(FileInfo fi, string pass, CoinStack stack)
+        private static bool CreateSafeFile(string filename, string pass, CoinStack stack)
         {
             var cryptpass = Crypter.Blowfish.Crypt(Encoding.UTF8.GetBytes(pass));
             byte[] cryptedpassbytes = Encoding.UTF8.GetBytes(cryptpass);
@@ -390,7 +379,7 @@ namespace CloudCoin
             }
         }
 
-        private static CoinStack ReadSafeFile(FileInfo fi, string pass)
+        private static CoinStack ReadSafeFile(string filename, string pass)
         {
 //            var cryptpass = Crypter.Blowfish.Crypt(Encoding.UTF8.GetBytes(pass));
 //            byte[] cryptedpassbytes = Encoding.UTF8.GetBytes(cryptpass);
@@ -487,7 +476,7 @@ namespace CloudCoin
         {
             beforeFixStart?.Invoke(this, e);
         }
-        private void StartFixProcess(object sender, EventArgs e)
+        void StartFixProcess(object sender, EventArgs e)
         {
             List<CloudCoin> coinsToFix = Contents.cloudcoin.FindAll(x => x.Verdict == CloudCoin.Status.Fractioned);
             FixCoinWindow fixWin;

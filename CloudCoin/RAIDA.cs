@@ -1,16 +1,11 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Media.Imaging;
-using RestSharp;
-using Newtonsoft.Json;
 
 namespace CloudCoin
 {
-    public partial class RAIDA
+    public class RAIDA
     {
-//        MainWindow mainWin = ;
         public const short NODEQNTY = 25;
         public const short MINTRUSTEDNODES4AUTH = 8;
         public Node[] NodesArray = new Node[NODEQNTY];
@@ -43,301 +38,156 @@ namespace CloudCoin
             Switzerland,
             Luxenburg
         };
-        private static RAIDA theOnlyRAIDAInstance = new RAIDA();
-        public static RAIDA Instance
+		static RAIDA theOnlyRAIDAInstance;
+		public static RAIDA Instance
         {
             get
             {
-                return theOnlyRAIDAInstance;
+				return theOnlyRAIDAInstance ?? new RAIDA();
             }
         }
 
 
-        private RAIDA()
-        {
-            for(int i=0; i<NodesArray.Length;i++)
-            {
-                NodesArray[i] = new Node(i);
-            }
-        }
+		RAIDA()
+		{
+			for (int i = 0; i < NodesArray.Length; i++)
+			{
+				NodesArray[i] = new Node(i);
+			}
+		}
 
-        public void getEcho() 
+		public void getEcho(Action<Task> afterEveryNode, Action<Task[]> whenAllNodes) 
         {
-            Task<EchoResponse>[] tasks = new Task<EchoResponse>[NODEQNTY];
-            int i = 0;
+            Task<RAIDAResponse>[] tasks = new Task<RAIDAResponse>[NODEQNTY];
             foreach (Node node in Instance.NodesArray)
             {
-                tasks[i] = Task.Factory.StartNew(() => node.Echo());
-                Task cont = tasks[i].ContinueWith(ancestor => { MainWindow.Instance.ShowEchoProgress(ancestor.Result, node); });
-                i++;
+				tasks[node.Number] = node.EchoAsync();
+				tasks[node.Number].Start();
+				tasks[node.Number].ContinueWith(ancestor => afterEveryNode(ancestor) );
             }
-            Task.Factory.ContinueWhenAll(tasks, delegate { MainWindow.Instance.AllEchoesCompleted(); });
+			Task.Factory.ContinueWhenAll( tasks, ancestors => whenAllNodes(ancestors) );
         }
 
-        public void Detect(CloudCoin coin)
+		public void Detect(CloudCoin coin, Action<Task> afterEveryNode, Action<Task[]> whenAllNodes)
         {
-            CheckCoinsWindow checkCoinsWindow = new CheckCoinsWindow();
-            Stopwatch sw = new Stopwatch();
-            CoinStack stack = new CoinStack(coin);
-
-//            checkCoinsWindow.Filename.Text = coin.filename;
-            checkCoinsWindow.CoinImage.Source = coin.coinImage;
-            checkCoinsWindow.coinsToDetect = 1;
-            checkCoinsWindow.Show();
-
-            Task<DetectResponse>[] tasks = new Task<DetectResponse>[NODEQNTY];
-            int i = 0;
-            sw.Start();
+            Task<RAIDAResponse>[] tasks = new Task<RAIDAResponse>[NODEQNTY];
             foreach (Node node in Instance.NodesArray)
             {
-                tasks[i] = Task.Factory.StartNew(() => node.Detect(coin));
-                tasks[i].ContinueWith(ancestor => { checkCoinsWindow.ShowDetectProgress(ancestor.Result, node); });
-                i++;
+				tasks[node.Number] = node.DetectAsync(coin);
+				tasks[node.Number].Start();
+				tasks[node.Number].ContinueWith(ancestor => afterEveryNode(ancestor) );
             }
-
-            Task checkCompleted = Task.Factory.ContinueWhenAll(tasks, delegate { checkCoinsWindow.AllCoinDetectCompleted(coin, sw); });
-            checkCompleted.ContinueWith(delegate { checkCoinsWindow.AllStackDetectCompleted(stack, sw); });
+			Task.Factory.ContinueWhenAll(tasks, ancestors => whenAllNodes(ancestors));
         }
-        public void Detect(CoinStack stack)
-        {
-            CheckCoinsWindow checkCoinsWindow = new CheckCoinsWindow();
-//            checkCoinsWindow.Filename.Text = FD.SafeFileName;
-            checkCoinsWindow.CoinImage.Source = new BitmapImage(new Uri(@"pack://application:,,,/Resources/stackcoins.png", UriKind.Absolute));
-            checkCoinsWindow.coinsToDetect = stack.coinsInStack;
-            checkCoinsWindow.Show();
 
+		public void Detect(CoinStack stack, Action<Task> afterEveryNode, Action<Task[]> whenAllNodes, Action<Task[]> whenAllCoins)
+        {
             Task[] checkStackTasks = new Task[stack.cloudcoin.Count()];
-            Stopwatch stackCheckTime = new Stopwatch();
-            stackCheckTime.Start();
-            Stopwatch[] tw = new Stopwatch[stack.cloudcoin.Count()];
+
             for (int k = 0; k < stack.cloudcoin.Count(); k++)
             {
                 var coin = stack.cloudcoin[k];
-                Task<DetectResponse>[] checkCoinTasks = new Task<DetectResponse>[NODEQNTY];
-                var t = tw[k] = new Stopwatch();
-                t.Start();
+				Task<RAIDAResponse>[] checkCoinTasks = new Task<RAIDAResponse>[NODEQNTY];
+
                 foreach (Node node in Instance.NodesArray)
                 {
-                    checkCoinTasks[node.Number] = Task.Factory.StartNew(() => node.Detect(coin));
-                    checkCoinTasks[node.Number].ContinueWith(ancestor => { checkCoinsWindow.ShowDetectProgress(ancestor.Result, node); });
+                    checkCoinTasks[node.Number] = node.DetectAsync(coin);
+					checkCoinTasks[node.Number].Start();
+					checkCoinTasks[node.Number].ContinueWith(ancestor => afterEveryNode(ancestor) );
                 }
-                checkStackTasks[k] = Task.Factory.ContinueWhenAll(checkCoinTasks, delegate { checkCoinsWindow.AllCoinDetectCompleted(coin, t); });
+				checkStackTasks[k] = Task.Factory.ContinueWhenAll(checkCoinTasks, ancestors => whenAllNodes(ancestors) );
             }
-            Task.Factory.ContinueWhenAll(checkStackTasks, delegate { checkCoinsWindow.AllStackDetectCompleted(stack, stackCheckTime); });
+			Task.Factory.ContinueWhenAll(checkStackTasks, ancestors => whenAllCoins(ancestors) );
         }
 
-        public partial class Node
-        {
-            public int Number;
-            public Countries Country
-            {
-                get
-                {
-                    switch (Number)
-                    {
-                        case 0: return Countries.Australia;
-                        case 1: return Countries.Macedonia;
-                        case 2: return Countries.Philippines;
-                        case 3: return Countries.Serbia;
-                        case 4: return Countries.Bulgaria;
-                        case 5: return Countries.Sweden;
-                        case 6: return Countries.California;
-                        case 7: return Countries.UK;
-                        case 8: return Countries.Punjab;
-                        case 9: return Countries.Banglore;
-                        case 10: return Countries.Texas;
-                        case 11: return Countries.USA1;
-                        case 12: return Countries.Romania;
-                        case 13: return Countries.Taiwan;
-                        case 14: return Countries.Russia1;
-                        case 15: return Countries.Russia2;
-                        case 16: return Countries.Columbia;
-                        case 17: return Countries.Singapore;
-                        case 18: return Countries.Germany;
-                        case 19: return Countries.Canada;
-                        case 20: return Countries.Venezuela;
-                        case 21: return Countries.Hyperbad;
-                        case 22: return Countries.USA2;
-                        case 23: return Countries.Switzerland;
-                        case 24: return Countries.Luxenburg;
-                        default: return Countries.USA3;
-                    }
-                }
-            }
+		FixitHelper fixer;
 
-            public string Name { get; set; }
-            public Uri BaseUri
-            {
-                get { return new Uri("https://RAIDA" + Number.ToString() + ".cloudcoin.global/service"); }
-            }
-            public Uri BackupUri
-            {
-                get { return new Uri("https://RAIDA" + Number.ToString() + ".cloudcoin.ch/service"); }
-            }
-            public EchoResponse LastEchoStatus;
-            public DetectResponse LastDetectResult;
-            public string Location
-            {
-                get
-                {
-                    return Country.ToString();
-                }
-            }
+		public async Task fixCoin(CloudCoin brokeCoin, Action<Task> afterNodeFix)
+		{
+			bool[] result = new bool[NODEQNTY];
 
-            public Node(int number)
-            {
-                Number = number;
-                Name = "RAIDA" + number.ToString();
-            }
+			for (int guid_id = 0; guid_id < NODEQNTY; guid_id++)
+			{
+				int index = guid_id; // needed for async tasks
+				if (brokeCoin.detectStatus[guid_id] == CloudCoin.raidaNodeResponse.fail)
+				{ // This guid has failed, get tickets 
+					result[guid_id] = await ProcessFixingGUID(index, brokeCoin, afterNodeFix);
+				}// end for failed guid
+				else
+					result[guid_id] = true;
+			}//end for all the guids
+			bool isGood = result.All(x => x == true);
+		}
 
-            public EchoResponse Echo()
-            {
-                var client = new RestClient();
-                client.BaseUrl = BaseUri;
-                var request = new RestRequest("echo");
-                request.Timeout = 2500;
-                EchoResponse getEcho = new EchoResponse();
+		async Task<bool> ProcessFixingGUID(int guid_id, CloudCoin returnCoin, Action<Task> afterNodeFix)
+		{
+			fixer = new FixitHelper(guid_id, returnCoin.an);
+			RAIDAResponse[] ticketStatus = new RAIDAResponse[3];
+			bool result = false;
 
-                Stopwatch sw = new Stopwatch();
-                sw.Start();
-                try
-                {
-                    getEcho = JsonConvert.DeserializeObject<EchoResponse>(client.Execute(request).Content);
-                }
-                catch (JsonException e)
-                {
-                    getEcho = new EchoResponse(Name, "Invalid respose", getEcho.ErrorMessage, DateTime.Now.ToString());
-                    
-                }
-                getEcho = getEcho ?? new EchoResponse(Name, "Network problem", "Node not found", DateTime.Now.ToString());
-                if (getEcho.ErrorException != null)
-                        getEcho = new EchoResponse(Name, "Network problem", getEcho.ErrorMessage, DateTime.Now.ToString());
+			int corner = 1;
+			while (!fixer.finnished)
+			{
+				string[] trustedServerAns = {
+							returnCoin.an[fixer.currentTriad[0].Number],
+							returnCoin.an[fixer.currentTriad[1].Number],
+							returnCoin.an[fixer.currentTriad[2].Number]
+				};
 
-                sw.Stop();
-                getEcho.responseTime = sw.Elapsed;
-                
-                return getEcho;
-            }
+				ticketStatus = await get_tickets(fixer.currentTriad, trustedServerAns, returnCoin.nn, returnCoin.sn, returnCoin.denomination);
+				// See if there are errors in the tickets                  
+				if (ticketStatus[0].status != "ticket" || ticketStatus[1].status != "ticket" || ticketStatus[2].status != "ticket")
+				{// No tickets, go to next triad corner 
+					corner++;
+					fixer.setCornerToCheck(corner);
+				}
+				else
+				{// Has three good tickets   
+					var t = Instance.NodesArray[guid_id].FixAsync(fixer.currentTriad, ticketStatus[0].message, ticketStatus[1].message,
+						ticketStatus[2].message, returnCoin.an[guid_id], returnCoin.sn);
+					t.Start();
+					var fff = await t;
 
-            public DetectResponse Detect (CloudCoin coin)
-            {
-                var client = new RestClient();
-                client.BaseUrl = BaseUri;
-                var request = new RestRequest("detect");
-                request.AddQueryParameter("nn", coin.nn.ToString());
-                request.AddQueryParameter("sn", coin.sn.ToString());
-                request.AddQueryParameter("an", coin.an[Number]);
-                request.AddQueryParameter("pan", coin.pans[Number]);
-                request.AddQueryParameter("denomination", Utils.Denomination2Int(coin.denomination).ToString());
-                request.Timeout = 2000;
-                DetectResponse getDetectResult = new DetectResponse();
+					if (fff.status == "success")  // the guid IS recovered!!!
+					{
+						returnCoin.detectStatus[guid_id] = CloudCoin.raidaNodeResponse.pass;
+						//                        DispatcherHelper.CheckBeginInvokeOnUI(() => { fixWin.ViewModel.nodeStatus[guid_id] = true; });
+						fixer.finnished = true;
+						result = true;
+					}
+					else if (fff.status == "fail")
+					{ // command failed,  need to try another corner
+						corner++;
+						fixer.setCornerToCheck(corner);
+						returnCoin.detectStatus[guid_id] = CloudCoin.raidaNodeResponse.fail;
+					}
+					else
+					{
+						corner++;
+						fixer.setCornerToCheck(corner);
+						returnCoin.detectStatus[guid_id] = CloudCoin.raidaNodeResponse.error;
+					}
 
-                Stopwatch sw = new Stopwatch();
-                sw.Start();
-                try
-                {
-                    getDetectResult = JsonConvert.DeserializeObject<DetectResponse>(client.Execute(request).Content);
-                }
-                catch (JsonException e)
-                {
-                    getDetectResult = new DetectResponse(Name, coin.sn.ToString(), "Invalid response", "The server does not respond or returns invalid data", DateTime.Now.ToString());
-                }
-                getDetectResult = getDetectResult ?? new DetectResponse(Name, coin.sn.ToString(), "Network problem", "Node not found", DateTime.Now.ToString());
-                if (getDetectResult.ErrorException != null)
-                    getDetectResult = new DetectResponse(Name, coin.sn.ToString(), "Network problem", "Problems with network connection", DateTime.Now.ToString());
+					t.ContinueWith(ancestor => afterNodeFix(ancestor)); // Here we call callback
+					//end if else fix was successful
+				}//end if else one of the tickts has an error. 
+			}//end while fixer not finnihsed. 
+			 // the guid cannot be recovered! all corners checked
 
-                sw.Stop();
-                getDetectResult.responseTime = sw.Elapsed;
+			return result;
+		}
 
-                if (getDetectResult.status == "pass")
-                {
-                    coin.detectStatus[Number] = CloudCoin.raidaNodeResponse.pass;
-                    coin.an[Number] = coin.pans[Number];
-                }
-                else if (getDetectResult.status == "fail")
-                    coin.detectStatus[Number] = CloudCoin.raidaNodeResponse.fail;
-                else
-                    coin.detectStatus[Number] = CloudCoin.raidaNodeResponse.error;
-                LastDetectResult = getDetectResult;
+		async Task<RAIDAResponse[]> get_tickets(Node[] triad, string[] ans, int nn, int sn, CloudCoin.Denomination denomination)
+		{
+			RAIDAResponse[] returnTicketsStatus = new RAIDAResponse[3];
 
-                return getDetectResult;
-            }
+			for (int i = 0; i < 3; i++)
+			{
+				int index = i;
+				returnTicketsStatus[i] = await triad[index].GetTicketAsync(nn, sn, ans[index], denomination);
+			}
 
-            public override string ToString()
-            {
-                string result = "Server: " + Name + 
-                    "\nLocation: " + Location + 
-                    "\nStatus: " + LastEchoStatus.status + 
-                    "\nEcho: " + LastEchoStatus.responseTime.ToString("sfff") + "ms";
-                return result;
-            }
-
-            public string ToString(DetectResponse res)
-            {
-                string result = "Server: " + Number +
-                    "\nLocation: " + Location +
-                    "\nStatus: " + res.status +
-                    "\nEcho: " + res.responseTime.ToString("sfff") + "ms";
-                return result;
-            }
-        }
-
-        public class EchoResponse : RestResponse<EchoResponse>
-        {
-            public string server { get; set; }
-            public string status { get; set; }
-            public string message { get; set; }
-            public string time { get; set; }
-            public TimeSpan responseTime { get; set; }
-
-            public EchoResponse()
-            {
-                
-                server = "unknown";
-                status = "unknown";
-                message = "empty";
-                time = "";
-            }
-
-            public EchoResponse(string server, string status, string message, string time)
-            {
-                this.server = server;
-                this.status = status;
-                this.message = message;
-                this.time = time;
-            }
-
-        }
-
-        public class DetectResponse : RestResponse<DetectResponse>
-        {
-            public string server { get; set; }
-            public string status { get; set; }
-            public string sn { get; set; }
-            public string message { get; set; }
-            public string time { get; set; }
-            public TimeSpan responseTime { get; set; }
-
-            public DetectResponse()
-            {
-
-                server = "unknown";
-                status = "unknown";
-                message = "empty";
-                time = "";
-            }
-
-            public DetectResponse(string server, string sn, string status, string message, string time)
-            {
-                this.server = server;
-                this.sn = sn;
-                this.status = status;
-                this.message = message;
-                this.time = time;
-            }
-
-        }
-
-
-    }
+			return returnTicketsStatus;
+		}//end get_tickets
+	}
 }

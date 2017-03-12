@@ -1,5 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using System.Linq;
+using System.Collections.Generic;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 
 namespace CloudCoin
@@ -8,40 +11,35 @@ namespace CloudCoin
 	{
 		public enum Type { json, jpeg, unknown }
 		public Type Filetype;
-		string Filename;
+		BinaryReader input;
 		public CoinStack Coins;
-		public CloudCoinIn(string fullPath)
+		public CloudCoinIn(Stream input)
 		{
-			FI = new FileInfo(fullPath);
-			if (FI.Exists)
+			using (input)
 			{
-				Filename = fullPath;
-				using (Stream fsSource = FI.Open(FileMode.Open))
+				if (input.CanRead)
 				{
 					byte[] signature = new byte[20];
-					fsSource.Read(signature, 0, 20);
-					string sig = Encoding.UTF8.GetString(signature);
+					input.Read(signature, 0, 20);
+					string sig = Encoding.UTF8.GetString(signature,0,20);
 					var reg = new Regex(@"{[.\n\t\x09\x0A\x0D]*""cloudcoin""");
 					if (Enumerable.SequenceEqual(signature.Take(3), new byte[] { 255, 216, 255 })) //JPEG
 					{
 						Filetype = Type.jpeg;
-						var coin = ReadJpeg(fsSource);
+						var coin = ReadJpeg(input);
 						Coins = new CoinStack(coin);
 					}
 					else if (reg.IsMatch(sig)) //JSON
 					{
 						Filetype = Type.json;
-						Coins = ReadJson(fsSource);
+						Coins = ReadJson(input);
 					}
 				}
-				var newFileName = FI.FullName + ".imported";
-				File.Move(FI.FullName, newFileName);
+				else
+				{
+					throw new IOException();
+				}
 			}
-			else
-			{
-				throw new FileNotFoundException();
-			}
-
 		}
 
 		private CloudCoin ReadJpeg(Stream jpegFS)
@@ -80,8 +78,8 @@ namespace CloudCoin
 			}
 			aoid[0] = jpegHexContent.Substring(840, 55);
 			ed = jpegHexContent.Substring(898, 4);
-			nn = Int16.Parse(jpegHexContent.Substring(902, 2), System.Globalization.NumberStyles.AllowHexSpecifier);
-			sn = Int32.Parse(jpegHexContent.Substring(904, 6), System.Globalization.NumberStyles.AllowHexSpecifier);
+			nn = short.Parse(jpegHexContent.Substring(902, 2), System.Globalization.NumberStyles.AllowHexSpecifier);
+			sn = int.Parse(jpegHexContent.Substring(904, 6), System.Globalization.NumberStyles.AllowHexSpecifier);
 
 			return (new CloudCoin(nn, sn, an, ed, aoid));
 		}
@@ -100,54 +98,6 @@ namespace CloudCoin
 				throw ex;
 			}
 			return stack;
-		}
-	}
-	public class CloudCoinJpeg
-	{
-		CloudCoin coin;
-		CloudCoinJpeg(CloudCoin inCoin)
-		{
-			coin.an = inCoin.an;
-			coin.nn = inCoin.nn;
-			coin.sn = inCoin.sn;
-			coin.ed = inCoin.ed;
-			coin.aoid = inCoin.aoid;
-		}
-		public void Read(Stream jpegFS)
-		{
-			// TODO: catch exception for wrong file format
-			//            filetype = Type.jpeg;
-			byte[] fileByteContent = new byte[455];
-			int numBytesToRead = fileByteContent.Length;
-			int numBytesRead = 0;
-			while (numBytesToRead > 0)
-			{
-				// Read may return anything from 0 to numBytesToRead.
-				int n = jpegFS.Read(fileByteContent, numBytesRead, numBytesToRead);
-
-				// Break when the end of the file is reached.
-				if (n == 0)
-					break;
-
-				numBytesRead += n;
-				numBytesToRead -= n;
-			}
-
-			string jpegHexContent = "";
-			jpegHexContent = Utils.ToHexString(fileByteContent);
-
-			for (int i = 0; i < RAIDA.NODEQNTY; i++)
-			{
-				coin.an[i] = jpegHexContent.Substring(40 + i * 32, 32);
-			}
-			coin.aoid[0] = jpegHexContent.Substring(840, 55);
-			coin.ed = jpegHexContent.Substring(898, 4);
-			coin.nn = short.Parse(jpegHexContent.Substring(902, 2), System.Globalization.NumberStyles.AllowHexSpecifier);
-			coin.sn = int.Parse(jpegHexContent.Substring(904, 6), System.Globalization.NumberStyles.AllowHexSpecifier);
-
-//			coin.generatePans();
-			coin.detectStatus = new CloudCoin.raidaNodeResponse[RAIDA.NODEQNTY];
-			for (int i = 0; i < RAIDA.NODEQNTY; i++) coin.detectStatus[i] = CloudCoin.raidaNodeResponse.unknown;
 		}
 	}
 
