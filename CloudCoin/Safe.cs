@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using CryptSharp;
 using PCLStorage;
+using Xamarin.Forms;
 
 using Newtonsoft.Json;
 
@@ -35,25 +36,24 @@ namespace CloudCoin
 
 				if (!checkDoesSafeExists.Equals(ExistenceCheckResult.FileExists))
 				{ //Safe does not exist, create one
-					var setPasswordViewModel = new SetPasswordViewModel();
-					if (pass != "error")
+					var sp = new SetPasswordView();
+					await Application.Current.MainPage.Navigation.PushModalAsync(sp);
+					await sp.PageClosedTask;
+					var coins = new CoinStack();
+					if (CreateSafeFile(SafeFileName, password, coins))
 					{
-						var coins = new CoinStack();
-						if (CreateSafeFile(SafeFileName, pass, coins))
-						{
-							theOnlySafeInstance = new Safe(SafeFileName, pass, coins);
-							return theOnlySafeInstance;
-						}
-						return null;
+						theOnlySafeInstance = new Safe(SafeFileName, password, coins);
+						return theOnlySafeInstance;
 					}
-					return null;
+					else
+						return null;
 				}
 				else
 				{
 					var pass = CheckPassword(SafeFileName);
 					if (pass != "error")
 					{
-						CoinStack safeContents = ReadSafeFile(fileInfo, pass);
+						CoinStack safeContents = ReadSafeFile(SafeFileName, password);
 						if (safeContents != null)
 						{
 							theOnlySafeInstance = new Safe(SafeFileName, pass, safeContents);
